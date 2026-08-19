@@ -1,4 +1,4 @@
-name: Build Tauri Portable EXE
+name: Build Tauri Windows Portable EXE
 
 on:
   push:
@@ -16,16 +16,16 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
 
-      - name: Setup Rust
+      - name: Setup Rust Toolchain (MSVC)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -35,59 +35,171 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install Project Dependencies
+        shell: powershell
+        run: |
+          if (Test-Path "package-lock.json") {
+            Write-Host "Installing dependencies using npm ci..."
+            npm ci
+          } else {
+            Write-Host "package-lock.json not found, running npm install..."
+            npm install
+          }
 
-      - name: Build frontend
+      - name: Verify and Ensure Tauri v1 CLI
+        shell: powershell
+        run: |
+          Write-Host "=== CHECKING TAURI CLI ==="
+          npx @tauri-apps/cli@1.6.0 --version
+
+      - name: Build Web Frontend Assets
         run: npm run build
 
-      - name: Validate frontend build
+      - name: Validate Frontend Build Output
         shell: powershell
         run: |
           if (-not (Test-Path "dist/index.html")) {
-            throw "dist/index.html does not exist."
+            throw "CRITICAL: Frontend build output 'dist/index.html' was not created!"
           }
-          Write-Host "Frontend build output validated."
+          Write-Host "Frontend build validated successfully."
 
-      - name: Build Tauri executable
-        run: npm run tauri build -- --target x86_64-pc-windows-msvc
-
-      - name: Stage and Validate Portable Executable
+      - name: Build Tauri Windows Executable (Tauri v1)
         shell: powershell
         run: |
-          $sourceExe = "src-tauri/target/x86_64-pc-windows-msvc/release/payroll-master-erp.exe"
+          Write-Host "=== EXECUTING TAURI V1 BUILD ==="
+          npx @tauri-apps/cli@1.6.0 build --target x86_64-pc-windows-msvc
+          $tauriExitCode = $LASTEXITCODE
+          if ($tauriExitCode -ne 0) {
+            throw "Tauri build process exited with error code: $tauriExitCode"
+          }
+          Write-Host "Tauri build completed successfully."
 
-          if (-not (Test-Path $sourceExe)) {
-            throw "Application executable not found at $sourceExe"
+      - name: Diagnostic: List Release Directory Contents
+        shell: powershell
+        run: |
+          Write-Host "=== [CI DIAGNOSTIC] LISTING TARGET RELEASE DIRECTORY ==="
+          $releasePath = "src-tauri/target/x86_64-pc-windows-msvc/release"
+          if (Test-Path $releasePath) {
+            Write-Host "Directory '$releasePath' exists. Listing direct items:"
+            Get-ChildItem -Path $releasePath | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+            
+            Write-Host "=== [CI DIAGNOSTIC] ALL .EXE FILES IN TARGET TREE ==="
+            Get-ChildItem -Path "src-tauri/target" -Filter "*.exe" -Recurse -File | Select-Object FullName, Length, LastWriteTime | Format-Table -AutoSize
+          } else {
+            Write-Host "WARNING: Directory '$releasePath' was not found. Searching full workspace for .exe files:"
+            Get-ChildItem -Path "." -Filter "*.exe" -Recurse -File | Select-Object FullName, Length, LastWriteTime | Format-Table -AutoSize
+          }
+          Write-Host "=== [CI DIAGNOSTIC] END OF DIRECTORY LISTING ==="
+
+      - name: Discover and Stage Portable Application Executable
+        shell: powershell
+        run: |
+          Write-Host "=== DISCOVERING GENERATED APPLICATION EXECUTABLE ==="
+
+          $targetSearchPaths = @("src-tauri/target", "target")
+          $candidateExes = @()
+
+          foreach ($tPath in $targetSearchPaths) {
+            if (Test-Path $tPath) {
+              $allFound = Get-ChildItem -Path $tPath -Filter "*.exe" -Recurse -File -ErrorAction SilentlyContinue
+              foreach ($item in $allFound) {
+                $fullLower = $item.FullName.ToLower()
+                $nameLower = $item.Name.ToLower()
+
+                # Exclude build scripts, dependency test binaries, and compiler internals
+                if ($fullLower -match '[\\/](build|deps|incremental|\.fingerprint|examples)[\\/]') {
+                  continue
+                }
+                if ($nameLower -match 'build_script|build-script|\.tmp|installer|setup|unins') {
+                  continue
+                }
+
+                $candidateExes += $item
+              }
+            }
           }
 
+          if ($candidateExes.Count -eq 0) {
+            Write-Host "WARNING: No filtered executables found in standard release locations. Listing all discovered .exe files for diagnostics:"
+            Get-ChildItem -Path "." -Filter "*.exe" -Recurse -File -ErrorAction SilentlyContinue | Format-Table FullName, Length, LastWriteTime
+            throw "CRITICAL: No application executable was generated by the Tauri build process!"
+          }
+
+          Write-Host "Discovered $($candidateExes.Count) candidate executable(s):"
+          $candidateExes | Format-Table FullName, Length, LastWriteTime
+
+          # Read Cargo package name if available
+          $cargoPkgName = ""
+          if (Test-Path "src-tauri/Cargo.toml") {
+            $cargoRaw = Get-Content "src-tauri/Cargo.toml" -Raw
+            if ($cargoRaw -match 'name\s*=\s*"([^"]+)"') {
+              $cargoPkgName = $matches[1].ToLower()
+            }
+          }
+
+          # Read Tauri productName if available
+          $tauriProdName = ""
+          if (Test-Path "src-tauri/tauri.conf.json") {
+            try {
+              $tJson = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+              if ($tJson.package.productName) {
+                $tauriProdName = $tJson.package.productName.ToLower()
+              }
+            } catch {}
+          }
+
+          $chosenExe = $null
+
+          # 1. Match by Cargo package name
+          if ($cargoPkgName) {
+            $chosenExe = $candidateExes | Where-Object { $_.BaseName.ToLower() -eq $cargoPkgName } | Select-Object -First 1
+          }
+
+          # 2. Match by Tauri product name
+          if (-not $chosenExe -and $tauriProdName) {
+            $chosenExe = $candidateExes | Where-Object { $_.BaseName.ToLower() -eq $tauriProdName } | Select-Object -First 1
+          }
+
+          # 3. Match release directory with target triple
+          if (-not $chosenExe) {
+            $chosenExe = $candidateExes | Where-Object { $_.FullName -match 'x86_64-pc-windows-msvc[\\/]release' } | Sort-Object Length -Descending | Select-Object -First 1
+          }
+
+          # 4. Fallback to largest non-internal executable
+          if (-not $chosenExe) {
+            $chosenExe = $candidateExes | Sort-Object Length -Descending | Select-Object -First 1
+          }
+
+          if (-not $chosenExe -or $chosenExe.Length -le 0) {
+            throw "CRITICAL: Selected executable is invalid or 0 bytes!"
+          }
+
+          Write-Host "Selected application executable: $($chosenExe.FullName) ($($chosenExe.Length) bytes)"
+
+          # Stage into dist-portable
           New-Item -ItemType Directory -Force -Path "dist-portable" | Out-Null
-          $destExe = "dist-portable/PayrollMaster-ERP-Portable.exe"
-          Copy-Item -Path $sourceExe -Destination $destExe -Force
+          $destExe = "dist-portable/PayrollHRERP-Portable.exe"
+          Copy-Item -Path $chosenExe.FullName -Destination $destExe -Force
 
           if (-not (Test-Path $destExe)) {
-            throw "Validation failed: $destExe does not exist."
+            throw "CRITICAL: Failed to copy executable to $destExe"
           }
 
           $destItem = Get-Item $destExe
           if ($destItem.Length -le 0) {
-            throw "Validation failed: $destExe size is 0 bytes."
+            throw "CRITICAL: Copied portable executable in dist-portable is 0 bytes!"
           }
 
-          if ($destItem.Extension -ne ".exe") {
-            throw "Validation failed: File extension is not .exe."
+          $portableCount = (Get-ChildItem -Path "dist-portable" -File).Count
+          if ($portableCount -ne 1) {
+            throw "CRITICAL: dist-portable must contain exactly ONE file, found $portableCount."
           }
 
-          $portableItems = Get-ChildItem -Path "dist-portable" -File
-          if ($portableItems.Count -ne 1) {
-            throw "Validation failed: dist-portable must contain exactly ONE file, found $($portableItems.Count)."
-          }
+          Write-Host "Portable executable staged successfully: $($destItem.FullName) ($($destItem.Length) bytes)"
 
-          Write-Host "Verified portable executable: $($destItem.FullName) ($($destItem.Length) bytes)"
-
-      - name: Upload Artifact
+      - name: Upload Windows Portable Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PayrollMaster-ERP-Windows-Portable
-          path: dist-portable/PayrollMaster-ERP-Portable.exe
+          name: PayrollHRERP-Windows-Portable
+          path: dist-portable/PayrollHRERP-Portable.exe
           if-no-files-found: error
