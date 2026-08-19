@@ -1,0 +1,93 @@
+name: Build Tauri Portable EXE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-portable:
+    name: Build Windows Portable Executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Validate frontend build
+        shell: powershell
+        run: |
+          if (-not (Test-Path "dist/index.html")) {
+            throw "dist/index.html does not exist."
+          }
+          Write-Host "Frontend build output validated."
+
+      - name: Build Tauri executable
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: Stage and Validate Portable Executable
+        shell: powershell
+        run: |
+          $sourceExe = "src-tauri/target/x86_64-pc-windows-msvc/release/payroll-master-erp.exe"
+
+          if (-not (Test-Path $sourceExe)) {
+            throw "Application executable not found at $sourceExe"
+          }
+
+          New-Item -ItemType Directory -Force -Path "dist-portable" | Out-Null
+          $destExe = "dist-portable/PayrollMaster-ERP-Portable.exe"
+          Copy-Item -Path $sourceExe -Destination $destExe -Force
+
+          if (-not (Test-Path $destExe)) {
+            throw "Validation failed: $destExe does not exist."
+          }
+
+          $destItem = Get-Item $destExe
+          if ($destItem.Length -le 0) {
+            throw "Validation failed: $destExe size is 0 bytes."
+          }
+
+          if ($destItem.Extension -ne ".exe") {
+            throw "Validation failed: File extension is not .exe."
+          }
+
+          $portableItems = Get-ChildItem -Path "dist-portable" -File
+          if ($portableItems.Count -ne 1) {
+            throw "Validation failed: dist-portable must contain exactly ONE file, found $($portableItems.Count)."
+          }
+
+          Write-Host "Verified portable executable: $($destItem.FullName) ($($destItem.Length) bytes)"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PayrollMaster-ERP-Windows-Portable
+          path: dist-portable/PayrollMaster-ERP-Portable.exe
+          if-no-files-found: error

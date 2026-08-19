@@ -1,0 +1,8 @@
+{
+  "name": "Remix Multi-Company Payroll Management System",
+  "description": "Desktop ERP Multi-Company Payroll Management System with top navigation, dropdown menu system, and internal multi-window workspace.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

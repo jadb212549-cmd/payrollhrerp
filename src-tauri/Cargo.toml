@@ -1,0 +1,18 @@
+[package]
+name = "payroll-master-erp"
+version = "1.0.0"
+description = "Multi-Company Payroll Management System Portable Desktop ERP"
+authors = ["PayrollMaster System Admin"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = [ "shell-open" ] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
