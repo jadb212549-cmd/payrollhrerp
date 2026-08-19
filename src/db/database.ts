@@ -250,6 +250,22 @@ export class DatabaseEngine {
     });
   }
 
+  private changeListeners: Array<() => void> = [];
+
+  public addChangeListener(listener: () => void) {
+    this.changeListeners.push(listener);
+  }
+
+  private notifyChange() {
+    for (const listener of this.changeListeners) {
+      try {
+        listener();
+      } catch (err) {
+        console.warn('[DatabaseEngine] Error in change listener:', err);
+      }
+    }
+  }
+
   /**
    * Generic put (insert or update)
    */
@@ -261,7 +277,10 @@ export class DatabaseEngine {
         const store = tx.objectStore(storeName);
         const req = store.put(value);
 
-        req.onsuccess = () => resolve();
+        req.onsuccess = () => {
+          this.notifyChange();
+          resolve();
+        };
         req.onerror = () => reject(req.error);
       } catch (err) {
         reject(err);
@@ -280,7 +299,10 @@ export class DatabaseEngine {
         const store = tx.objectStore(storeName);
         const req = store.delete(key);
 
-        req.onsuccess = () => resolve();
+        req.onsuccess = () => {
+          this.notifyChange();
+          resolve();
+        };
         req.onerror = () => reject(req.error);
       } catch (err) {
         reject(err);

@@ -3,6 +3,7 @@ import { Company } from '../db/schema';
 import { companyService } from '../services/CompanyService';
 import { migrationManager } from '../db/migrations';
 import { settingsService } from '../services/SettingsService';
+import { portablePersistenceService } from '../services/PortablePersistenceService';
 
 interface CompanyContextValue {
   currentCompany: Company | null;
@@ -53,14 +54,17 @@ export const CompanyProvider: React.FC<{ children: ReactNode }> = ({ children })
     async function init() {
       try {
         setIsLoading(true);
-        // 1. Run migrations safely
+        // 1. Initialize portable persistence and restore existing records if available
+        await portablePersistenceService.initialize();
+
+        // 2. Run migrations safely
         const { currentVersion } = await migrationManager.runMigrations();
         if (mounted) setDbVersion(currentVersion);
 
-        // 2. Load settings for startup company
+        // 3. Load settings for startup company
         const settings = await settingsService.getSettings();
 
-        // 3. Load active companies
+        // 4. Load active companies
         const list = await companyService.listActiveCompanies();
         if (mounted) {
           setActiveCompanies(list);

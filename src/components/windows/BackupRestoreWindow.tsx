@@ -2,7 +2,7 @@
  * Backup, Restore, & Factory Reset Window - Phase 10 Production Hardening
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   HardDriveDownload, 
   HardDriveUpload, 
@@ -17,9 +17,13 @@ import {
   X,
   FileJson,
   Lock,
-  Database
+  Database,
+  HardDrive,
+  Save,
+  FolderOpen
 } from 'lucide-react';
 import { backupRestoreService, BackupPayload } from '../../services/BackupRestoreService';
+import { portablePersistenceService } from '../../services/PortablePersistenceService';
 import { useAuth } from '../../context/AuthContext';
 
 export const BackupRestoreWindow: React.FC = () => {
@@ -27,6 +31,59 @@ export const BackupRestoreWindow: React.FC = () => {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [portablePath, setPortablePath] = useState<string>('./payroll_data/payroll_master_db.json');
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+
+  useEffect(() => {
+    portablePersistenceService.getPortablePath().then((p) => {
+      if (p) setPortablePath(p);
+    });
+    setLastSaved(portablePersistenceService.getLastSavedTimestamp());
+  }, []);
+
+  const handleSaveToExeFolder = async () => {
+    setIsProcessing(true);
+    setStatusMessage({ type: 'info', text: 'Syncing database directly to disk beside the executable...' });
+    try {
+      const res = await portablePersistenceService.saveToDisk();
+      if (res.success) {
+        setLastSaved(new Date().toISOString());
+        setStatusMessage({
+          type: 'success',
+          text: `Data successfully saved to portable directory! (${res.totalRecords} records stored at ${res.path})`,
+        });
+      } else {
+        setStatusMessage({ type: 'error', text: 'Failed to write portable data file.' });
+      }
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: `Save error: ${err?.message || 'Unknown error'}` });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReloadFromExeFolder = async () => {
+    setIsProcessing(true);
+    setStatusMessage({ type: 'info', text: 'Loading and restoring database records from portable folder beside the EXE...' });
+    try {
+      const res = await portablePersistenceService.restoreFromDisk();
+      if (res.success) {
+        setStatusMessage({
+          type: 'success',
+          text: `Restored ${res.loadedRecords} records from ${res.source}. Refreshing view...`,
+        });
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } else {
+        setStatusMessage({ type: 'error', text: `Restore error: ${res.source}` });
+      }
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: `Reload error: ${err?.message || 'Unknown error'}` });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   // Restore State
   const [restorePayload, setRestorePayload] = useState<BackupPayload | null>(null);
@@ -147,8 +204,8 @@ export const BackupRestoreWindow: React.FC = () => {
           <div className="flex items-center gap-2.5">
             <HardDriveDownload className="w-5 h-5 text-blue-600" />
             <div>
-              <h1 className="text-sm font-bold text-slate-900">Database Backup, Restore & Disaster Recovery</h1>
-              <p className="text-[11px] text-slate-500">Manage encrypted JSON database snapshots with SHA-256 integrity verification.</p>
+              <h1 className="text-sm font-bold text-slate-900">Database Persistence, Backup & Disaster Recovery</h1>
+              <p className="text-[11px] text-slate-500">Auto-persisted beside the Windows Portable EXE with JSON backups & SHA-256 integrity verification.</p>
             </div>
           </div>
         </div>
@@ -166,6 +223,52 @@ export const BackupRestoreWindow: React.FC = () => {
             <span>{statusMessage.text}</span>
           </div>
         )}
+
+        {/* Highlight Card: Portable Storage Beside EXE */}
+        <div className="p-4 bg-gradient-to-r from-blue-50/90 to-indigo-50/90 border border-blue-200 rounded-2xl shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-blue-900 text-sm">
+              <HardDrive className="w-4 h-4 text-blue-600" />
+              <span>Portable Storage Beside Executable</span>
+            </div>
+            <span className="px-2 py-0.5 bg-blue-100/80 border border-blue-300 text-blue-800 rounded-full text-[10.5px] font-semibold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Auto-Saving Active</span>
+            </span>
+          </div>
+
+          <p className="text-slate-600 text-[11.5px] leading-relaxed">
+            All company profiles, employees, attendance, rates, loans, and payroll runs are automatically saved to and loaded from the <code>payroll_data/</code> folder right next to your portable application file:
+          </p>
+
+          <div className="bg-white/80 border border-blue-200 rounded-xl p-2.5 font-mono text-[11px] text-slate-700 break-all flex items-center gap-2">
+            <FolderOpen className="w-4 h-4 text-blue-500 shrink-0" />
+            <span>{portablePath}</span>
+          </div>
+
+          {lastSaved && (
+            <p className="text-[10.5px] text-slate-500">
+              Last saved to disk: <strong>{new Date(lastSaved).toLocaleTimeString()}</strong> ({new Date(lastSaved).toLocaleDateString()})
+            </p>
+          )}
+
+          <div className="flex items-center gap-2.5 pt-1">
+            <button
+              onClick={handleSaveToExeFolder}
+              disabled={isProcessing}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-semibold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" /> Force Save to EXE Folder
+            </button>
+            <button
+              onClick={handleReloadFromExeFolder}
+              disabled={isProcessing}
+              className="px-3.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Reload from EXE Folder
+            </button>
+          </div>
+        </div>
 
         {/* Action Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

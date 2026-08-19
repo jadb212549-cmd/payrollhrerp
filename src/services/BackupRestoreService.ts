@@ -6,7 +6,7 @@ import { dbEngine } from '../db/database';
 import { SecurityService } from './SecurityService';
 import { auditService } from './AuditService';
 
-const ALL_STORE_NAMES = [
+export const ALL_STORE_NAMES = [
   'schema_migrations',
   'companies',
   'users',
