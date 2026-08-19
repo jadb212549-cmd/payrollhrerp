@@ -32,53 +32,117 @@ function makeChunk(type, data) {
   return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
 }
 
-function makePng(width, height) {
+/**
+ * Render the Payroll HR ERP payslip badge icon
+ * Exact visual recreation:
+ * - Rounded square outer badge: Vibrant Royal Blue (#1565C0 -> #0D47A1)
+ * - Inside: White document / payslip card with subtle rounded corners
+ * - Top of document: Solid blue header band (#1976D2)
+ * - Middle: 3 horizontal salary/item line rules (#90CAF9 / #64B5F6)
+ * - Bottom of document: Crisp Peso symbol (₱) with double horizontal crossbar
+ */
+function renderPayrollIcon(size) {
+  const width = size;
+  const height = size;
   const rawRows = [];
+
   const cx0 = width / 2;
   const cy0 = height / 2;
-  const cornerR = width * 0.22;
+
+  // Badge parameters
+  const badgeCorner = width * 0.22;
+  const badgeHalf = width * 0.46;
+
+  // Document parameters
+  const docLeft = cx0 - width * 0.30;
+  const docRight = cx0 + width * 0.30;
+  const docTop = cy0 - height * 0.34;
+  const docBottom = cy0 + height * 0.34;
+  const docCorner = width * 0.08;
 
   for (let y = 0; y < height; y++) {
     const row = Buffer.alloc(1 + width * 4);
     row[0] = 0; // Filter: None
-    
+
     for (let x = 0; x < width; x++) {
       const cx = x - cx0;
       const cy = y - cy0;
-      
-      // Rounded rect test
-      const dx = Math.max(0, Math.abs(cx) - (cx0 - cornerR - 1));
-      const dy = Math.max(0, Math.abs(cy) - (cy0 - cornerR - 1));
-      const distFromCorner = Math.sqrt(dx * dx + dy * dy);
 
-      let r = 15, g = 23, b = 42, a = 255; // Slate 900 #0f172a
+      // 1. Outer rounded rectangle (Badge)
+      const bdx = Math.max(0, Math.abs(cx) - (badgeHalf - badgeCorner));
+      const bdy = Math.max(0, Math.abs(cy) - (badgeHalf - badgeCorner));
+      const bDist = Math.sqrt(bdx * bdx + bdy * bdy);
 
-      if (distFromCorner > cornerR) {
-        a = 0; // Transparent
-      } else {
-        // Deep Indigo/Blue gradient background
+      let r = 0, g = 0, b = 0, a = 0;
+
+      if (bDist <= badgeCorner) {
+        // Antialiasing edge
+        const edgeDist = badgeCorner - bDist;
+        const alphaFactor = Math.min(1, Math.max(0, edgeDist * 2));
+        a = Math.round(255 * alphaFactor);
+
+        // Blue Gradient: #1E88E5 at top to #0D47A1 at bottom
         const t = y / height;
-        r = Math.round(15 + t * 20);  // 15 -> 35
-        g = Math.round(30 + t * 50);  // 30 -> 80
-        b = Math.round(80 + t * 140); // 80 -> 220
-        
-        // Inner gold badge (Payroll emblem)
-        const radius = Math.sqrt(cx * cx + cy * cy);
-        if (radius < width * 0.36 && radius > width * 0.32) {
-          // Gold border ring
-          r = 245; g = 158; b = 11; // Amber 500
-        } else if (radius <= width * 0.32) {
-          // Central emblem: White / Gold geometric glyph
-          if (Math.abs(cx) < width * 0.18 && Math.abs(cy) < width * 0.20) {
-            // Horizontal and vertical bars of ERP/Dollar mark
-            const inVBar = Math.abs(cx) < width * 0.06;
-            const inHBar = Math.abs(cy) < width * 0.05 || Math.abs(cy - width*0.1) < width * 0.04 || Math.abs(cy + width*0.1) < width * 0.04;
-            
-            if (inVBar || inHBar) {
-              r = 255; g = 255; b = 255; // White
-            } else {
-              r = 30; g = 58; b = 138; // Contrast Indigo
+        r = Math.round(25 - t * 12);
+        g = Math.round(118 - t * 47);
+        b = Math.round(210 - t * 49);
+
+        // 2. Inner Document / Payslip Card
+        const docCx = cx;
+        const docCy = cy;
+        const docHalfW = (docRight - docLeft) / 2;
+        const docHalfH = (docBottom - docTop) / 2;
+
+        const ddx = Math.max(0, Math.abs(docCx) - (docHalfW - docCorner));
+        const ddy = Math.max(0, Math.abs(docCy) - (docHalfH - docCorner));
+        const dDist = Math.sqrt(ddx * ddx + ddy * ddy);
+
+        if (dDist <= docCorner) {
+          // Inside White Document
+          r = 255;
+          g = 255;
+          b = 255;
+
+          // A. Top Header band (Blue)
+          const relY = y / height;
+          const relX = x / width;
+
+          if (relY >= 0.23 && relY <= 0.32 && relX >= 0.28 && relX <= 0.72) {
+            r = 13; g = 71; b = 161; // #0D47A1
+          }
+
+          // B. Document Line 1 (Payroll text line)
+          if (relY >= 0.41 && relY <= 0.44 && relX >= 0.30 && relX <= 0.70) {
+            r = 144; g = 202; b = 249; // #90CAF9
+          }
+
+          // C. Document Line 2 (Deductions line)
+          if (relY >= 0.51 && relY <= 0.54 && relX >= 0.30 && relX <= 0.70) {
+            r = 144; g = 202; b = 249;
+          }
+
+          // D. Document Line 3 (Net pay line)
+          if (relY >= 0.61 && relY <= 0.64 && relX >= 0.30 && relX <= 0.70) {
+            r = 144; g = 202; b = 249;
+          }
+
+          // E. Peso symbol (₱) at bottom center of document
+          // Vertical stem of P
+          if (relX >= 0.44 && relX <= 0.48 && relY >= 0.70 && relY <= 0.82) {
+            r = 13; g = 71; b = 161; // Dark Blue
+          }
+          // Loop of P
+          if (relX >= 0.47 && relX <= 0.56 && relY >= 0.70 && relY <= 0.77) {
+            const loopCx = (0.50);
+            const loopCy = (0.735);
+            const lDist = Math.hypot((relX - loopCx)*1.2, relY - loopCy);
+            if (lDist <= 0.042 && lDist >= 0.015) {
+              r = 13; g = 71; b = 161;
             }
+          }
+          // Peso crossbars (2 horizontal lines through P stem)
+          if ((relY >= 0.725 && relY <= 0.740 || relY >= 0.755 && relY <= 0.770) && relX >= 0.39 && relX <= 0.53) {
+            r = 13; g = 71; b = 161;
           }
         }
       }
@@ -113,27 +177,30 @@ function makePng(width, height) {
   return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
 }
 
-function makeIco(pngEntries) {
-  const count = pngEntries.length;
+/**
+ * Create a modern Windows ICO file with exact specified layer sizes
+ */
+function createWindowsIco(layerEntries) {
+  const count = layerEntries.length;
   const header = Buffer.alloc(6);
-  header.writeUInt16LE(0, 0);     // Reserved
-  header.writeUInt16LE(1, 2);     // Type 1 = Icon (.ico)
-  header.writeUInt16LE(count, 4); // Number of images
+  header.writeUInt16LE(0, 0);     // Reserved (must be 0)
+  header.writeUInt16LE(1, 2);     // Resource Type 1 = Icon (.ico)
+  header.writeUInt16LE(count, 4); // Number of image frames
 
   let currentOffset = 6 + count * 16;
   const directoryEntries = [];
   const imageBuffers = [];
 
-  for (const item of pngEntries) {
+  for (const item of layerEntries) {
     const entry = Buffer.alloc(16);
-    entry[0] = item.size >= 256 ? 0 : item.size; // Width (0 means 256)
-    entry[1] = item.size >= 256 ? 0 : item.size; // Height (0 means 256)
-    entry[2] = 0; // Color count (0 for 256+ colors)
+    entry[0] = item.size >= 256 ? 0 : item.size; // Width (0 indicates 256px)
+    entry[1] = item.size >= 256 ? 0 : item.size; // Height (0 indicates 256px)
+    entry[2] = 0; // Color count (0 = 256+ colors)
     entry[3] = 0; // Reserved
-    entry.writeUInt16LE(1, 4); // Color planes
-    entry.writeUInt16LE(32, 6); // Bits per pixel
-    entry.writeUInt32LE(item.buf.length, 8); // Size of image data
-    entry.writeUInt32LE(currentOffset, 12); // Offset of image data
+    entry.writeUInt16LE(1, 4);  // Color planes (1)
+    entry.writeUInt16LE(32, 6); // Bits per pixel (32-bit truecolor RGBA)
+    entry.writeUInt32LE(item.buf.length, 8); // Size of PNG/RGB data in bytes
+    entry.writeUInt32LE(currentOffset, 12);  // Offset from start of ICO file
 
     directoryEntries.push(entry);
     imageBuffers.push(item.buf);
@@ -143,87 +210,53 @@ function makeIco(pngEntries) {
   return Buffer.concat([header, ...directoryEntries, ...imageBuffers]);
 }
 
-function makeIcns(pngEntriesMap) {
-  // ICNS container with PNG-encoded entries
-  // Type mapping for ICNS
-  const typeMap = {
-    16: 'icp4',
-    32: 'icp5',
-    64: 'icp6',
-    128: 'ic07',
-    256: 'ic08',
-    512: 'ic09',
-    1024: 'ic10'
-  };
-
-  const chunks = [];
-  let totalLength = 8; // 'icns' (4) + length (4)
-
-  for (const item of pngEntriesMap) {
-    const ostype = typeMap[item.size];
-    if (ostype) {
-      const typeBuf = Buffer.from(ostype, 'ascii');
-      const lenBuf = Buffer.alloc(4);
-      const chunkLen = 8 + item.buf.length;
-      lenBuf.writeUInt32BE(chunkLen, 0);
-      chunks.push(Buffer.concat([typeBuf, lenBuf, item.buf]));
-      totalLength += chunkLen;
-    }
-  }
-
-  const magic = Buffer.from('icns', 'ascii');
-  const sizeBuf = Buffer.alloc(4);
-  sizeBuf.writeUInt32BE(totalLength, 0);
-
-  return Buffer.concat([magic, sizeBuf, ...chunks]);
-}
-
-function generateAllIcons() {
+function buildAllPayrollIcons() {
   const iconsDir = path.join(__dirname, '..', 'src-tauri', 'icons');
   if (!fs.existsSync(iconsDir)) {
     fs.mkdirSync(iconsDir, { recursive: true });
   }
 
-  console.log('Generating pristine PNGs and modern ICO/ICNS...');
+  console.log('Generating Payroll HR ERP icons...');
 
-  const resolutions = [16, 30, 32, 44, 48, 50, 64, 71, 89, 107, 128, 142, 150, 256, 284, 310, 512];
-  const pngCache = {};
+  // Required ICO layers: 16x16, 24x24, 32x32, 48x48, 64x64, 256x256
+  const requiredIcoSizes = [16, 24, 32, 48, 64, 256];
+  const icoLayers = [];
 
-  for (const s of resolutions) {
-    pngCache[s] = makePng(s, s);
+  for (const size of requiredIcoSizes) {
+    const pngBuf = renderPayrollIcon(size);
+    icoLayers.push({ size, buf: pngBuf });
   }
 
-  // Standard Tauri Icons
-  fs.writeFileSync(path.join(iconsDir, '32x32.png'), pngCache[32]);
-  fs.writeFileSync(path.join(iconsDir, '128x128.png'), pngCache[128]);
-  fs.writeFileSync(path.join(iconsDir, '128x128@2x.png'), pngCache[256]);
-  fs.writeFileSync(path.join(iconsDir, 'icon.png'), pngCache[512]);
+  // 1. Generate the modern icon.ico file containing all 6 required layers
+  const icoData = createWindowsIco(icoLayers);
+  const icoPath = path.join(iconsDir, 'icon.ico');
+  fs.writeFileSync(icoPath, icoData);
+  console.log(`Generated: ${icoPath} (${icoData.length} bytes, layers: ${requiredIcoSizes.join(', ')})`);
 
-  // Windows Store / App tiles
-  fs.writeFileSync(path.join(iconsDir, 'Square30x30Logo.png'), pngCache[30]);
-  fs.writeFileSync(path.join(iconsDir, 'Square44x44Logo.png'), pngCache[44]);
-  fs.writeFileSync(path.join(iconsDir, 'Square71x71Logo.png'), pngCache[71]);
-  fs.writeFileSync(path.join(iconsDir, 'Square89x89Logo.png'), pngCache[89]);
-  fs.writeFileSync(path.join(iconsDir, 'Square107x107Logo.png'), pngCache[107]);
-  fs.writeFileSync(path.join(iconsDir, 'Square142x142Logo.png'), pngCache[142]);
-  fs.writeFileSync(path.join(iconsDir, 'Square150x150Logo.png'), pngCache[150]);
-  fs.writeFileSync(path.join(iconsDir, 'Square284x284Logo.png'), pngCache[284]);
-  fs.writeFileSync(path.join(iconsDir, 'Square310x310Logo.png'), pngCache[310]);
-  fs.writeFileSync(path.join(iconsDir, 'StoreLogo.png'), pngCache[50]);
+  // 2. Generate standard companion PNG files for Tauri
+  const pngSizes = {
+    '32x32.png': 32,
+    '128x128.png': 128,
+    '128x128@2x.png': 256,
+    'icon.png': 512,
+    'Square30x30Logo.png': 30,
+    'Square44x44Logo.png': 44,
+    'Square71x71Logo.png': 71,
+    'Square89x89Logo.png': 89,
+    'Square107x107Logo.png': 107,
+    'Square142x142Logo.png': 142,
+    'Square150x150Logo.png': 150,
+    'Square284x284Logo.png': 284,
+    'Square310x310Logo.png': 310,
+    'StoreLogo.png': 50
+  };
 
-  // Modern multi-resolution PNG-encoded ICO (Supported natively by Windows Resource Compiler RC.EXE)
-  const icoSizes = [16, 32, 48, 64, 128, 256];
-  const icoEntries = icoSizes.map(s => ({ size: s, buf: pngCache[s] }));
-  const icoData = makeIco(icoEntries);
-  fs.writeFileSync(path.join(iconsDir, 'icon.ico'), icoData);
+  for (const [filename, size] of Object.entries(pngSizes)) {
+    const pngBuf = renderPayrollIcon(size);
+    fs.writeFileSync(path.join(iconsDir, filename), pngBuf);
+  }
 
-  // Modern ICNS
-  const icnsSizes = [16, 32, 64, 128, 256, 512];
-  const icnsEntries = icnsSizes.map(s => ({ size: s, buf: pngCache[s] }));
-  const icnsData = makeIcns(icnsEntries);
-  fs.writeFileSync(path.join(iconsDir, 'icon.icns'), icnsData);
-
-  console.log('Successfully generated all icons!');
+  console.log('All Payroll HR ERP icons updated successfully.');
 }
 
-generateAllIcons();
+buildAllPayrollIcons();
